@@ -1,3 +1,4 @@
+from utils.audio_policy import flac_only
 import hashlib
 import time
 import re
@@ -21,6 +22,8 @@ class Qobuz:
 
         # Create session with persistent headers — exactly like qobuz-dl
         self.s = create_requests_session()
+        from utils.rate_limit import install_service_gate
+        install_service_gate(self.s, 'qobuz', 'ORPHEUS_QOBUZ_RPM', 60)
         self.s.headers.update({
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
             'X-App-Id': self._app_id,
@@ -287,6 +290,8 @@ class Qobuz:
         return self.api_call('catalog/search', params, signed=True)
 
     def get_file_url(self, track_id: str, quality_id=27):
+        if flac_only() and str(quality_id) not in {"6", "7", "27"}:
+            raise ValueError("FLAC only: lossy format requests are disabled")
         # Always use guest ID for quality_id=5 (previews) if not logged in
         is_guest_preview = not self.auth_token and str(quality_id) == '5'
         
@@ -319,6 +324,8 @@ class Qobuz:
             else: self.s.headers.pop('X-App-Id', None)
 
     def get_sample_url(self, track_id: str):
+        if flac_only():
+            return None  # Lossy previews are disabled in strict mode.
         """Get the sample/preview URL for a track."""
         try:
             # Set Referer for guest previews to bypass blocks

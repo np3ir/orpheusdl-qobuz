@@ -1,3 +1,4 @@
+from utils.audio_policy import flac_only
 import os
 import unicodedata
 import re
@@ -575,20 +576,33 @@ class ModuleInterface:
                 credits_extra_kwargs={'data': {track_id: track_data}},
                 download_extra_kwargs={},
                 error=None,
-                preview_url=preview_url,
+                preview_url=None if flac_only() else preview_url,
             )
 
-        quality_tier_id = self.quality_parse[quality_tier]
-        try:
-            stream_data = self.session.get_file_url(track_id, quality_tier_id)
-        except Exception as e:
-            # If we get a 401 for MP3 (format 5), it might be an API quirk.
-            # Don't crash; fall back to basic info and let get_track_download handle it later.
-            is_401 = '"code":401' in str(e) or "authentication is required" in str(e).lower()
-            if is_401 and quality_tier_id == 5:
-                stream_data = {'bit_depth': 16, 'sampling_rate': 44.1, 'format_id': 5, 'url': None}
-            else:
-                raise e
+        if flac_only():
+            quality_tier_id = 27  # Native Hi-Res FLAC; CD FLAC fallback only.
+            try:
+                stream_data = self.session.get_file_url(track_id, quality_tier_id)
+            except Exception:
+                stream_data = self.session.get_file_url(track_id, 6)
+            if str(stream_data.get('format_id')) not in {'6', '7', '27'}:
+                stream_data = self.session.get_file_url(track_id, 6)
+            if str(stream_data.get('format_id')) not in {'6', '7', '27'} or not stream_data.get('url'):
+                raise ValueError('FLAC only: track omitted; native FLAC unavailable')
+            stream_data['format_id'] = int(stream_data['format_id'])
+
+        else:
+            quality_tier_id = self.quality_parse[quality_tier]
+            try:
+                stream_data = self.session.get_file_url(track_id, quality_tier_id)
+            except Exception as e:
+                # If we get a 401 for MP3 (format 5), it might be an API quirk.
+                # Don't crash; fall back to basic info and let get_track_download handle it later.
+                is_401 = '"code":401' in str(e) or "authentication is required" in str(e).lower()
+                if is_401 and quality_tier_id == 5:
+                    stream_data = {'bit_depth': 16, 'sampling_rate': 44.1, 'format_id': 5, 'url': None}
+                else:
+                    raise e
 
         bitrate = 320
         if stream_data.get('format_id') in {6, 7, 27}:
@@ -613,19 +627,23 @@ class ModuleInterface:
             codec=CodecEnum.FLAC if stream_data.get('format_id') in {6, 7, 27} else CodecEnum.NONE if not stream_data.get('format_id') else CodecEnum.MP3,
             duration=track_data.get('duration'),
             credits_extra_kwargs={'data': {track_id: track_data}},
-            download_extra_kwargs={'url_or_track_id': stream_data.get('url')},
+            download_extra_kwargs={'url_or_track_id': stream_data.get('url'), 'format_id': stream_data.get('format_id')},
             error=f'Track "{track_data["title"]}" is not streamable!' if not track_data.get('streamable') else None
         )
 
     def get_track_download(self, url_or_track_id, quality_tier=None, codec_options=None, **kwargs):
         # Called either as get_track_download(url) from download_extra_kwargs or get_track_download(track_id, quality_tier, codec_options) from core fallback
         if isinstance(url_or_track_id, str) and url_or_track_id.startswith('http'):
+            if flac_only() and str(kwargs.get("format_id")) not in {"6", "7", "27"}:
+                raise ValueError("FLAC only: refused URL with unverified format")
             url = url_or_track_id
         else:
             self._ensure_credentials()
             track_id = url_or_track_id
-            quality_id = self.quality_parse.get(quality_tier, 5) if quality_tier is not None else 5
+            quality_id = 27 if flac_only() else (self.quality_parse.get(quality_tier, 5) if quality_tier is not None else 5)
             stream_data = self.session.get_file_url(str(track_id), quality_id)
+            if flac_only() and str(stream_data.get("format_id")) not in {"6", "7", "27"}:
+                raise ValueError("FLAC only: refused non-FLAC audio transfer")
             url = stream_data.get('url')
         return TrackDownloadInfo(download_type=DownloadEnum.URL, file_url=url)
 
@@ -1290,7 +1308,7 @@ class ModuleInterface:
             item = SearchResult(
                 name=name, artists=artists, year=year, result_id=str(i['id']),
                 explicit=bool(i.get('parental_warning')), additional=final_additional,
-                duration=duration, image_url=image_url, preview_url=preview_url,
+                duration=duration, image_url=image_url, preview_url=None if flac_only() else preview_url,
                 extra_kwargs={'data': {str(i['id']): i}} if query_type is DownloadTypeEnum.track else {}
             )
             items.append(item)
