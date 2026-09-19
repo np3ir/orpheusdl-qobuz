@@ -3,9 +3,17 @@ import hashlib
 import time
 import re
 import base64
+import http.client
 from collections import OrderedDict
 
 from utils.utils import create_requests_session
+
+# Qobuz's Akamai CDN (streaming-qobuz-std.akamaized.net) occasionally returns a
+# response with more than Python's default cap of 100 HTTP headers, which makes
+# http.client abort the connection ("got more than 100 headers") and the audio
+# download fail even after urllib3 retries. Raise the cap so those responses
+# parse. Global attribute, but only set when the Qobuz module loads.
+http.client._MAXHEADERS = 1000
 
 
 class Qobuz:

@@ -94,11 +94,26 @@ class ModuleInterface:
         self.session = Qobuz(settings['app_id'], settings['app_secret'], module_controller.module_error)
         self.module_controller = module_controller
         
-        # Load credentials from both persistent settings and session storage
+        # Load credentials from both persistent settings and session storage.
+        # settings.json TAKES PRECEDENCE: a token the user pasted there must win over
+        # a stale token cached in loginstorage.bin. Otherwise updating settings.json is
+        # silently ignored (the stored token overrides it) and downloads 401 with a
+        # perfectly valid token sitting in the config. Falls back to the stored token
+        # (e.g. one minted by the OAuth flow) only when settings has none.
         storage = module_controller.temporary_settings_controller
-        auth_token = storage.read('token') or settings.get('auth_token')
-        user_id = storage.read('user_id') or settings.get('user_id')
-        
+        settings_token = (settings.get('auth_token') or '').strip()
+        settings_user_id = (settings.get('user_id') or '').strip()
+        auth_token = settings_token or storage.read('token')
+        user_id = settings_user_id or storage.read('user_id')
+        # keep loginstorage in sync so the two can't diverge again
+        if settings_token and settings_token != storage.read('token'):
+            try:
+                storage.set('token', settings_token)
+                if settings_user_id:
+                    storage.set('user_id', settings_user_id)
+            except Exception:
+                pass
+
         self.session.auth_token = auth_token
 
         # The OAuth flow stores the app_id the token is bound to alongside the
